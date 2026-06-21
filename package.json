@@ -1,0 +1,13 @@
+{
+  "name": "kitchen-table-holdem-live",
+  "version": "1.0.0",
+  "description": "Live multiplayer Texas Hold'em - play with friends and family on separate devices.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
