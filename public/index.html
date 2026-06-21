@@ -163,33 +163,138 @@ input { font-family: inherit; }
 @keyframes dealIn { from { opacity: 0; transform: translateY(-8px) scale(.85); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .card-deal { animation: dealIn .32s ease both; }
 
-.players-list { padding: 4px 12px 10px; display: flex; flex-direction: column; gap: 7px; }
-.seat {
-  display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,.2);
-  border: 1.5px solid var(--felt-line); border-radius: 14px; padding: 9px 11px; position: relative;
-  transition: border-color .25s, box-shadow .25s, opacity .25s;
+/* ===== Poker table (oval, seats arranged around it) ===== */
+.table-oval-wrap { padding: 8px 14px 46px; display: flex; justify-content: center; }
+.table-oval {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  aspect-ratio: 1 / 1.22;
+  margin: 0 auto;
 }
-.seat.is-turn { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 18px rgba(212,175,55,.3); }
-.seat.is-folded { opacity: .45; }
-.seat.is-out { opacity: .28; filter: grayscale(.6); }
-.seat.is-winner { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 24px rgba(212,175,55,.5); background: rgba(212,175,55,.1); }
-.seat.is-me { border-color: rgba(212,175,55,.4); }
-.seat .avatar { width: 34px; height: 34px; min-width: 34px; border-radius: 50%; background: var(--felt-deep); border: 1.5px solid var(--gold); color: var(--gold-soft); font-family: var(--font-display); font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 15px; }
-.seat-info { flex: 1; min-width: 0; }
-.seat-name-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.seat-name { font-weight: 700; font-size: 14px; color: var(--cream); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
-.badge { font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 5px; letter-spacing: .5px; line-height: 1.4; white-space: nowrap; }
+.table-felt {
+  position: absolute;
+  left: 9%; right: 9%; top: 13%; bottom: 13%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 38%, var(--felt) 0%, var(--felt-deep) 88%);
+  border: 9px solid var(--rail);
+  box-shadow: 0 16px 38px rgba(0,0,0,.5), inset 0 0 36px rgba(0,0,0,.45), inset 0 0 0 1px rgba(212,175,55,.15);
+}
+.table-felt::after {
+  content: '';
+  position: absolute; inset: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(212,175,55,.14);
+}
+.table-center {
+  position: absolute; left: 50%; top: 41%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  width: 60%;
+}
+.table-center .community-row { gap: 4px; }
+.table-center .card { width: 32px; height: 46px; border-radius: 6px; }
+.table-center .card-rank { font-size: 12px; }
+.table-center .card-suit { font-size: 10px; }
+.table-center .pot-amount { font-size: 24px; }
+
+.oval-seat {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 92px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  text-align: center;
+  z-index: 2;
+}
+.table-oval.density-mid .oval-seat { width: 78px; }
+.table-oval.density-hi .oval-seat { width: 64px; }
+
+.oval-seat .avatar {
+  width: 36px; height: 36px; min-width: 36px; border-radius: 50%; background: var(--felt-deep);
+  border: 1.5px solid var(--gold); color: var(--gold-soft); font-family: var(--font-display); font-weight: 600;
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+  box-shadow: 0 3px 8px rgba(0,0,0,.4);
+}
+.table-oval.density-mid .oval-seat .avatar { width: 30px; height: 30px; font-size: 13px; }
+.table-oval.density-hi .oval-seat .avatar { width: 25px; height: 25px; font-size: 11px; border-width: 1px; }
+
+.oval-seat-pod {
+  background: rgba(10,8,5,.62);
+  border: 1.5px solid var(--felt-line);
+  border-radius: 14px;
+  padding: 7px 6px 6px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 100%;
+  transition: border-color .25s, box-shadow .25s, opacity .25s;
+  position: relative;
+  backdrop-filter: blur(1px);
+}
+.table-oval.density-mid .oval-seat-pod { padding: 5px 4px 4px; border-radius: 11px; gap: 2px; }
+.table-oval.density-hi .oval-seat-pod { padding: 4px 3px 3px; border-radius: 9px; gap: 1px; }
+.oval-seat.is-turn .oval-seat-pod { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 16px rgba(212,175,55,.45); }
+.oval-seat.is-folded .oval-seat-pod { opacity: .42; }
+.oval-seat.is-out .oval-seat-pod { opacity: .25; filter: grayscale(.6); }
+.oval-seat.is-winner .oval-seat-pod { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 22px rgba(212,175,55,.55); background: rgba(212,175,55,.14); }
+.oval-seat.is-me .oval-seat-pod { border-color: rgba(212,175,55,.45); }
+
+.oval-seat-name { font-weight: 700; font-size: 11.5px; color: var(--cream); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.table-oval.density-mid .oval-seat-name { font-size: 10px; }
+.table-oval.density-hi .oval-seat-name { font-size: 8.5px; }
+.oval-seat-badges { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; }
+.badge { font-family: var(--font-mono); font-size: 8.5px; font-weight: 700; padding: 1px 5px; border-radius: 5px; letter-spacing: .3px; line-height: 1.4; white-space: nowrap; }
+.table-oval.density-hi .badge { font-size: 7px; padding: 0px 3px; }
 .badge-dealer { background: var(--gold); color: #2b1f08; }
 .badge-sb, .badge-bb { background: rgba(243,233,212,.14); color: var(--cream-dim); }
 .badge-allin { background: var(--ember); color: #fff; }
 .badge-fold { background: rgba(243,233,212,.08); color: var(--cream-dim); }
 .badge-out { background: rgba(243,233,212,.06); color: var(--cream-dim); }
 .badge-disconnected { background: rgba(192,80,60,.25); color: var(--ember-soft); }
-.seat-chips { font-family: var(--font-mono); font-size: 12px; color: var(--gold-soft); margin-top: 2px; }
-.seat-bet { font-family: var(--font-mono); font-size: 10.5px; color: var(--cream-dim); background: rgba(212,175,55,.12); border-radius: 6px; padding: 1px 6px; margin-top: 2px; display: inline-block; }
-.seat-hand-name { font-family: var(--font-mono); font-size: 10.5px; color: var(--gold-soft); margin-top: 3px; }
-.seat-cards { display: flex; gap: 3px; min-width: 48px; justify-content: flex-end; }
-.seat-win-amt { font-family: var(--font-mono); font-weight: 700; color: var(--gold-soft); font-size: 13px; position: absolute; right: 10px; top: -9px; background: var(--felt-deep); border: 1px solid var(--gold); border-radius: 6px; padding: 1px 6px; }
+
+.oval-seat-cards { display: flex; gap: 2px; justify-content: center; min-height: 30px; }
+.table-oval.density-mid .oval-seat-cards { min-height: 26px; }
+.table-oval.density-hi .oval-seat-cards { min-height: 22px; }
+.table-oval.density-hi .oval-seat-cards .card { width: 16px; height: 22px; border-radius: 3px; }
+.table-oval.density-hi .oval-seat-cards .card-rank { font-size: 7px; }
+.table-oval.density-hi .oval-seat-cards .card-suit { display: none; }
+.oval-seat-hand-name { font-family: var(--font-mono); font-size: 8.5px; color: var(--gold-soft); }
+.table-oval.density-hi .oval-seat-hand-name { display: none; }
+.oval-seat-win-amt {
+  font-family: var(--font-mono); font-weight: 700; color: var(--gold-soft); font-size: 11px;
+  position: absolute; left: 50%; top: -11px; transform: translateX(-50%);
+  background: var(--felt-deep); border: 1px solid var(--gold); border-radius: 6px; padding: 1px 6px;
+  white-space: nowrap;
+}
+
+/* Chip stack graphic */
+.chip-stack-row { display: flex; align-items: center; justify-content: center; gap: 5px; }
+.chip-stack-icon { position: relative; width: 22px; height: 16px; }
+.table-oval.density-hi .chip-stack-icon { width: 16px; height: 12px; }
+.chip-disc {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: 19px; height: 7px; border-radius: 50%;
+  border: 1px solid rgba(0,0,0,.3);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.25);
+}
+.table-oval.density-hi .chip-disc { width: 14px; height: 5px; }
+.chip-disc:nth-child(1) { bottom: 0; background: #8a2e22; border-color: #4a160f; }
+.chip-disc:nth-child(2) { bottom: 4px; background: #1f5c8a; border-color: #0f324c; }
+.chip-disc:nth-child(3) { bottom: 8px; background: var(--gold); border-color: #8a6c1e; }
+.table-oval.density-hi .chip-disc:nth-child(2) { bottom: 3px; }
+.table-oval.density-hi .chip-disc:nth-child(3) { bottom: 6px; }
+.chip-amount { font-family: var(--font-mono); font-weight: 700; font-size: 11px; color: var(--gold-soft); }
+.table-oval.density-mid .chip-amount { font-size: 9.5px; }
+.table-oval.density-hi .chip-amount { font-size: 8.5px; }
+.oval-seat-bet {
+  font-family: var(--font-mono); font-size: 8.5px; color: var(--cream-dim);
+  background: rgba(212,175,55,.14); border-radius: 5px; padding: 1px 5px;
+}
+.table-oval.density-hi .oval-seat-bet { display: none; }
+
+@media (max-width: 380px) {
+  .oval-seat { width: 78px; }
+  .oval-seat .avatar { width: 30px; height: 30px; font-size: 13px; }
+  .oval-seat-name { font-size: 10px; }
+  .chip-amount { font-size: 10px; }
+}
 
 /* ===== Your hand bar ===== */
 .your-hand-bar {
@@ -471,8 +576,7 @@ input { font-family: inherit; }
     if (pub.gameOver) return renderGameOver();
     const parts = [];
     parts.push(renderTopbar());
-    parts.push(renderBoardPanel());
-    parts.push(`<div class="players-list">${pub.players.map(p => renderSeat(p)).join('')}</div>`);
+    parts.push(renderTableOval());
     if (pub.stage === 'hand-over') parts.push(renderHandOverPanel());
     else parts.push(renderYourHandBar());
     if (ui.showLog) parts.push(renderLogPanel());
@@ -491,19 +595,54 @@ input { font-family: inherit; }
     </div>`;
   }
 
-  function renderBoardPanel() {
+  // Build seat positions around an oval, with "you" anchored at the bottom (like real poker sites)
+  function seatPositions(players, mySeat) {
+    const n = players.length;
+    const myIdx = Math.max(0, players.findIndex(p => p.seatIndex === mySeat));
+    const ordered = players.slice(myIdx).concat(players.slice(0, myIdx));
+    const Rx = n >= 7 ? 48 : 47, Ry = n >= 7 ? 41 : 39; // percentage radii within the table-oval box
+    return ordered.map((p, i) => {
+      const angleDeg = 90 + (360 / n) * i;
+      const rad = (angleDeg * Math.PI) / 180;
+      const x = 50 + Rx * Math.cos(rad);
+      const y = 50 + Ry * Math.sin(rad);
+      return { player: p, x, y };
+    });
+  }
+
+  function renderTableOval() {
+    const positions = seatPositions(pub.players, mySeatIndex);
+    const n = pub.players.length;
+    const densityClass = n >= 7 ? 'density-hi' : (n >= 6 ? 'density-mid' : '');
+    return `<div class="table-oval-wrap">
+      <div class="table-oval ${densityClass}">
+        <div class="table-felt"></div>
+        <div class="table-center">${renderBoardCenter()}</div>
+        ${positions.map(pos => renderOvalSeat(pos.player, pos.x, pos.y)).join('')}
+      </div>
+    </div>`;
+  }
+
+  function renderBoardCenter() {
     const slots = [];
     for (let i = 0; i < 5; i++) {
       if (i < pub.communityCards.length) slots.push(cardFaceHTML(pub.communityCards[i], '', i * 90));
       else slots.push(`<div class="card slot"></div>`);
     }
-    return `<div class="board-panel">
+    return `
       <div class="pot-display"><div class="pot-label">Pot</div><div class="pot-amount">$${pub.pot}</div></div>
       <div class="community-row">${slots.join('')}</div>
+    `;
+  }
+
+  function chipStackHTML(amount) {
+    return `<div class="chip-stack-row">
+      <div class="chip-stack-icon"><div class="chip-disc"></div><div class="chip-disc"></div><div class="chip-disc"></div></div>
+      <span class="chip-amount">$${amount}</span>
     </div>`;
   }
 
-  function renderSeat(p) {
+  function renderOvalSeat(p, x, y) {
     const isMe = p.seatIndex === mySeatIndex;
     const isTurn = pub.stage !== 'hand-over' && pub.currentSeat === p.seatIndex && !p.isOut;
     const result = pub.lastHandResult;
@@ -513,10 +652,9 @@ input { font-family: inherit; }
 
     let cardsHtml;
     if (p.isOut) cardsHtml = '';
-    else if (showFace) cardsHtml = showdownHand.holeCards.map(c => cardFaceHTML(c, 'small')).join('');
+    else if (showFace) cardsHtml = showdownHand.holeCards.map(c => cardFaceHTML(c, 'tiny')).join('');
     else if (p.folded) cardsHtml = '';
-    else if (isMe) cardsHtml = `<div class="card back small"></div><div class="card back small"></div>`;
-    else cardsHtml = `<div class="card back small"></div><div class="card back small"></div>`;
+    else cardsHtml = `<div class="card back tiny"></div><div class="card back tiny"></div>`;
 
     const badges = [];
     if (pub.dealerSeat === p.seatIndex) badges.push(`<span class="badge badge-dealer">D</span>`);
@@ -528,19 +666,20 @@ input { font-family: inherit; }
     if (!p.isBot && !p.connected) badges.push(`<span class="badge badge-disconnected">AWAY</span>`);
 
     let handNameLine = '';
-    if (showFace) handNameLine = `<div class="seat-hand-name">${escapeHtml(showdownHand.handName)}</div>`;
+    if (showFace) handNameLine = `<div class="oval-seat-hand-name">${escapeHtml(showdownHand.handName)}</div>`;
 
-    const betPill = (!p.isOut && p.contributionThisRound > 0 && pub.stage !== 'hand-over') ? `<div class="seat-bet">bet $${p.contributionThisRound}</div>` : '';
+    const betPill = (!p.isOut && p.contributionThisRound > 0 && pub.stage !== 'hand-over') ? `<div class="oval-seat-bet">bet $${p.contributionThisRound}</div>` : '';
 
-    return `<div class="seat ${isTurn ? 'is-turn' : ''} ${p.folded && !p.isOut ? 'is-folded' : ''} ${p.isOut ? 'is-out' : ''} ${winnerEntry ? 'is-winner' : ''} ${isMe ? 'is-me' : ''}">
-      ${winnerEntry ? `<div class="seat-win-amt">+$${winnerEntry.amount}</div>` : ''}
-      <div class="avatar">${avatarInitial(p.name)}</div>
-      <div class="seat-info">
-        <div class="seat-name-row"><span class="seat-name">${escapeHtml(p.name)}${isMe ? ' (you)' : ''}</span>${badges.join('')}</div>
-        <div class="seat-chips">$${p.chips}</div>
+    return `<div class="oval-seat ${isTurn ? 'is-turn' : ''} ${p.folded && !p.isOut ? 'is-folded' : ''} ${p.isOut ? 'is-out' : ''} ${winnerEntry ? 'is-winner' : ''} ${isMe ? 'is-me' : ''}" style="left:${x}%;top:${y}%;">
+      <div class="oval-seat-pod">
+        ${winnerEntry ? `<div class="oval-seat-win-amt">+$${winnerEntry.amount}</div>` : ''}
+        <div class="avatar">${avatarInitial(p.name)}</div>
+        <div class="oval-seat-name">${escapeHtml(p.name)}${isMe ? ' (you)' : ''}</div>
+        <div class="oval-seat-badges">${badges.join('')}</div>
+        <div class="oval-seat-cards">${cardsHtml}</div>
+        ${chipStackHTML(p.chips)}
         ${betPill}${handNameLine}
       </div>
-      <div class="seat-cards">${cardsHtml}</div>
     </div>`;
   }
 
