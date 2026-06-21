@@ -10,9 +10,111 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_PLAYERS = 9;
 const MIN_PLAYERS = 2;
-const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30000;
+const TURN_TIME_MS = Number(process.env.TURN_TIME_MS) || 20000; // every human gets this long to act
 const BOT_DELAY_MIN = 600, BOT_DELAY_MAX = 1100;
 const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no O/0/I/1
+
+// Last line of defense: log and survive instead of crashing every active game over one bad error.
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION (server kept running):', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('UNHANDLED REJECTION (server kept running):', err);
+});
+
+// ===================== PERSISTENCE (Upstash Redis REST API) =====================
+// Optional: if UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN aren't set, the server
+// runs exactly as before with no persistence. Set them to survive a server restart.
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const PERSISTENCE_ENABLED = !!(REDIS_URL && REDIS_TOKEN);
+const ROOM_TTL_SECONDS = 24 * 60 * 60; // saved rooms expire after 24h of no updates
+
+async function redisCommand(args) {
+  if (!PERSISTENCE_ENABLED) return null;
+  try {
+    const res = await fetch(REDIS_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json();
+    return data && 'result' in data ? data.result : null;
+  } catch (err) {
+    console.error('Redis command failed:', args[0], err.message);
+    return null;
+  }
+}
+
+function serializeRoomForPersistence(room) {
+  return {
+    code: room.code,
+    settings: room.settings,
+    phase: room.phase,
+    game: room.game,
+    lastActivity: room.lastActivity,
+    players: room.players.map(p => ({
+      seatIndex: p.seatIndex, name: p.name, isBot: p.isBot, token: p.token,
+      chips: p.chips, removed: p.removed,
+      // connId/_gp intentionally omitted - meaningless after a restart, rebuilt on load
+    })),
+  };
+}
+
+function deserializeRoomFromPersistence(saved) {
+  const room = {
+    code: saved.code,
+    settings: saved.settings,
+    phase: saved.phase,
+    game: saved.game,
+    lastActivity: saved.lastActivity || Date.now(),
+    pendingTimer: null,
+    players: saved.players.map(p => ({ ...p, connId: null, _gp: null })),
+  };
+  if (room.game) {
+    for (const p of room.players) {
+      p._gp = room.game.players.find(gp => gp.id === p.seatIndex) || null;
+    }
+  }
+  return room;
+}
+
+function persistRoom(room) {
+  if (!PERSISTENCE_ENABLED) return;
+  const payload = JSON.stringify(serializeRoomForPersistence(room));
+  redisCommand(['SET', `room:${room.code}`, payload, 'EX', String(ROOM_TTL_SECONDS)]);
+  // fire-and-forget - don't make every player action wait on a network round trip
+}
+
+async function loadRoomFromRedis(code) {
+  if (!PERSISTENCE_ENABLED) return null;
+  const raw = await redisCommand(['GET', `room:${code}`]);
+  if (!raw) return null;
+  try {
+    return deserializeRoomFromPersistence(JSON.parse(raw));
+  } catch (err) {
+    console.error('Failed to parse persisted room', code, err.message);
+    return null;
+  }
+}
+
+function deleteRoomFromRedis(code) {
+  if (!PERSISTENCE_ENABLED) return;
+  redisCommand(['DEL', `room:${code}`]);
+}
+
+// Looks in memory first; if the server just restarted and this room isn't loaded yet,
+// tries to restore it from Redis before giving up.
+async function getOrLoadRoom(code) {
+  let room = rooms.get(code);
+  if (room) return room;
+  room = await loadRoomFromRedis(code);
+  if (room) {
+    rooms.set(code, room);
+    if (room.phase === 'playing') scheduleNextActorIfNeeded(room); // re-arm whatever timer was running
+  }
+  return room;
+}
 
 // ===================== ROOM STATE =====================
 const rooms = new Map(); // code -> room
@@ -100,6 +202,7 @@ function buildPublicState(room) {
   base.sbSeat = seatForEngineIndex(room, g.sbIndex);
   base.bbSeat = seatForEngineIndex(room, g.bbIndex);
   base.currentSeat = g.stage === 'hand-over' ? null : seatForEngineIndex(room, g.currentPlayerIndex);
+  base.turnDeadline = (g.stage !== 'hand-over' && g.turnDeadline) ? g.turnDeadline : null;
   base.pot = g.players.reduce((s, p) => s + p.totalContributionThisHand, 0);
   base.currentBet = g.currentBet;
   base.communityCards = g.communityCards;
@@ -109,8 +212,8 @@ function buildPublicState(room) {
   if (g.lastHandResult) {
     base.lastHandResult = {
       showdown: g.lastHandResult.showdown,
-      winners: g.lastHandResult.winners.map(w => ({ seat: seatForEngineIndex(room, w.id), name: w.name, amount: w.amount })),
-      hands: g.lastHandResult.hands.map(h => ({ seat: seatForEngineIndex(room, h.id), name: h.name, holeCards: h.holeCards, handName: h.handName })),
+      winners: g.lastHandResult.winners.map(w => ({ seat: w.id, name: w.name, amount: w.amount })),
+      hands: g.lastHandResult.hands.map(h => ({ seat: h.id, name: h.name, holeCards: h.holeCards, handName: h.handName })),
     };
   } else {
     base.lastHandResult = null;
@@ -156,6 +259,7 @@ function broadcast(room) {
     send(conn.ws, pub);
     send(conn.ws, buildYouState(room, p));
   }
+  persistRoom(room);
 }
 
 // ===================== GAME FLOW =====================
@@ -171,8 +275,8 @@ function startGame(room) {
   }
   PE.startHand(game);
   syncChipsToRoomPlayers(room);
-  broadcast(room);
   scheduleNextActorIfNeeded(room);
+  broadcast(room);
 }
 
 function syncChipsToRoomPlayers(room) {
@@ -186,6 +290,7 @@ function clearPendingTimer(room) {
     clearTimeout(room.pendingTimer.timer);
     room.pendingTimer = null;
   }
+  if (room.game) room.game.turnDeadline = null;
 }
 
 function scheduleNextActorIfNeeded(room) {
@@ -194,58 +299,82 @@ function scheduleNextActorIfNeeded(room) {
   if (!g || g.stage === 'hand-over') return;
   const gp = g.players[g.currentPlayerIndex];
   if (!gp) return;
-  const roomPlayer = findPlayerBySeat(room, gp.id);
+
   if (gp.isBot) {
     const timer = setTimeout(() => {
-      if (!room.game || room.game.stage === 'hand-over') return;
-      const action = botDecide(room.game);
-      applyActionAndAdvance(room, action);
+      try {
+        if (!room.game || room.game.stage === 'hand-over') return;
+        const action = botDecide(room.game);
+        applyActionAndAdvance(room, action);
+      } catch (err) {
+        console.error('Bot decision error in room', room.code, err);
+        try {
+          if (room.game && room.game.stage !== 'hand-over') {
+            const va = PE.getValidActions(room.game);
+            if (va) applyActionAndAdvance(room, { type: va.canCheck ? 'check' : 'fold' });
+          }
+        } catch (err2) {
+          console.error('Recovery fold also failed in room', room.code, err2);
+        }
+      }
     }, BOT_DELAY_MIN + Math.random() * (BOT_DELAY_MAX - BOT_DELAY_MIN));
     room.pendingTimer = { seatIndex: gp.id, timer };
-  } else if (roomPlayer && !roomPlayer.connId) {
-    // disconnected human - grace period then auto-act
-    const timer = setTimeout(() => {
+    return;
+  }
+
+  // Every human gets a turn clock - whether they're connected and just slow, or disconnected entirely.
+  // Either way, the table can't be allowed to wait forever.
+  g.turnDeadline = Date.now() + TURN_TIME_MS;
+  const timer = setTimeout(() => {
+    try {
       if (!room.game || room.game.stage === 'hand-over') return;
       const va = PE.getValidActions(room.game);
       if (!va) return;
       const action = va.canCheck ? { type: 'check' } : { type: 'fold' };
       applyActionAndAdvance(room, action);
-    }, DISCONNECT_GRACE_MS);
-    room.pendingTimer = { seatIndex: gp.id, timer };
-  }
+    } catch (err) {
+      console.error('Turn-timer auto-act error in room', room.code, err);
+    }
+  }, TURN_TIME_MS);
+  room.pendingTimer = { seatIndex: gp.id, timer };
 }
 
 function applyActionAndAdvance(room, action) {
   PE.applyAction(room.game, action);
   syncChipsToRoomPlayers(room);
-  broadcast(room);
   if (room.game.stage === 'hand-over') {
     clearPendingTimer(room);
   } else {
     scheduleNextActorIfNeeded(room);
   }
+  broadcast(room);
 }
 
 // ===================== MESSAGE HANDLERS =====================
-function handleMessage(connId, raw) {
+async function handleMessage(connId, raw) {
   const conn = connections.get(connId);
   if (!conn) return;
   let msg;
   try { msg = JSON.parse(raw); } catch (e) { return sendError(conn.ws, 'Bad message'); }
   if (!msg || typeof msg.type !== 'string') return;
 
-  switch (msg.type) {
-    case 'create_room': return onCreateRoom(connId, msg);
-    case 'join_room': return onJoinRoom(connId, msg);
-    case 'add_bot': return onAddBot(connId, msg);
-    case 'remove_player': return onRemovePlayer(connId, msg);
-    case 'update_settings': return onUpdateSettings(connId, msg);
-    case 'start_game': return onStartGame(connId, msg);
-    case 'action': return onAction(connId, msg);
-    case 'next_hand': return onNextHand(connId, msg);
-    case 'return_to_lobby': return onReturnToLobby(connId, msg);
-    case 'leave_room': return onLeaveRoom(connId, msg);
-    case 'ping': return; // keepalive no-op
+  try {
+    switch (msg.type) {
+      case 'create_room': return onCreateRoom(connId, msg);
+      case 'join_room': return await onJoinRoom(connId, msg);
+      case 'add_bot': return onAddBot(connId, msg);
+      case 'remove_player': return onRemovePlayer(connId, msg);
+      case 'update_settings': return onUpdateSettings(connId, msg);
+      case 'start_game': return onStartGame(connId, msg);
+      case 'action': return onAction(connId, msg);
+      case 'next_hand': return onNextHand(connId, msg);
+      case 'return_to_lobby': return onReturnToLobby(connId, msg);
+      case 'leave_room': return onLeaveRoom(connId, msg);
+      case 'ping': return; // keepalive no-op
+    }
+  } catch (err) {
+    console.error('Error handling message type', msg.type, err);
+    sendError(conn.ws, 'Something went wrong with that action - please try again.');
   }
 }
 
@@ -274,13 +403,13 @@ function onCreateRoom(connId, msg) {
   broadcast(room);
 }
 
-function onJoinRoom(connId, msg) {
+async function onJoinRoom(connId, msg) {
   const conn = connections.get(connId);
-  const code = (msg.roomCode || '').trim().toUpperCase();
-  const room = rooms.get(code);
+  const code = String(msg.roomCode || '').trim().toUpperCase();
+  const room = await getOrLoadRoom(code);
   if (!room) return sendError(conn.ws, 'Room not found. Check the code and try again.');
 
-  // reconnect path
+  // reconnect path (same device/browser still has the token)
   if (msg.token) {
     const existing = room.players.find(p => p.token === msg.token);
     if (existing) {
@@ -288,18 +417,39 @@ function onJoinRoom(connId, msg) {
       conn.roomCode = room.code;
       conn.seatIndex = existing.seatIndex;
       send(conn.ws, { type: 'joined', roomCode: room.code, token: existing.token, seatIndex: existing.seatIndex });
-      clearPendingTimerIfMatches(room, existing.seatIndex); // they're back, cancel auto-fold grace timer for them specifically
-      scheduleNextActorIfNeeded(room); // re-evaluate (might still be their turn, now connected -> no auto timer needed)
+      clearPendingTimerIfMatches(room, existing.seatIndex); // they're back, cancel auto-act timer for them specifically
+      scheduleNextActorIfNeeded(room); // re-evaluate (might still be their turn, now connected -> restart their own clock)
       broadcast(room);
       return;
     }
   }
 
-  if (room.phase === 'playing') return sendError(conn.ws, 'This game already started. Ask the host for a new room.');
+  // mid-game rejoin-by-name path (lost the token - cleared browser data, new device, etc.)
+  // If the room code + the same name matches a seat that's currently disconnected, let them back into THAT seat
+  // rather than locking them out for the rest of the game.
+  if (room.phase === 'playing') {
+    const typedName = String(msg.name || '').trim().toLowerCase();
+    if (typedName) {
+      const reclaimable = room.players.find(p => !p.isBot && !p.connId && p.name.trim().toLowerCase() === typedName);
+      if (reclaimable) {
+        reclaimable.token = genToken(); // issue a fresh token for this new session
+        reclaimable.connId = connId;
+        conn.roomCode = room.code;
+        conn.seatIndex = reclaimable.seatIndex;
+        send(conn.ws, { type: 'joined', roomCode: room.code, token: reclaimable.token, seatIndex: reclaimable.seatIndex });
+        clearPendingTimerIfMatches(room, reclaimable.seatIndex);
+        scheduleNextActorIfNeeded(room);
+        broadcast(room);
+        return;
+      }
+    }
+    return sendError(conn.ws, "This game already started. If you're rejoining, make sure you type the exact same name you used before.");
+  }
+
   const activeCount = room.players.filter(p => !p.removed).length;
   if (activeCount >= MAX_PLAYERS) return sendError(conn.ws, 'This table is full.');
 
-  const name = (msg.name || '').trim().slice(0, 18) || ('Player ' + (activeCount + 1));
+  const name = String(msg.name || '').trim().slice(0, 18) || ('Player ' + (activeCount + 1));
   const seatIndex = nextSeatIndex(room);
   const token = genToken();
   const player = { seatIndex, name, isBot: false, token, connId, chips: 0, removed: false };
@@ -393,8 +543,8 @@ function onNextHand(connId, msg) {
   if (room.game.gameOver) return; // nothing to deal; client should show final results
   PE.startHand(room.game);
   syncChipsToRoomPlayers(room);
-  broadcast(room);
   scheduleNextActorIfNeeded(room);
+  broadcast(room);
 }
 
 function onLeaveRoom(connId) {
@@ -452,7 +602,7 @@ wss.on('connection', (ws) => {
   const connId = connCounter++;
   connections.set(connId, { ws, roomCode: null, seatIndex: null });
 
-  ws.on('message', (raw) => handleMessage(connId, raw));
+  ws.on('message', (raw) => { handleMessage(connId, raw).catch(err => console.error('Unhandled error in handleMessage:', err)); });
   ws.on('close', () => {
     disconnectFromRoom(connId);
     connections.delete(connId);
