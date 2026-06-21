@@ -130,10 +130,16 @@ input { font-family: inherit; }
 .lobby-actions .btn { flex: 1; }
 
 /* ===== Game screen ===== */
-.table-wrap { flex: 1; display: flex; flex-direction: column; background: radial-gradient(ellipse at 50% 0%, var(--felt) 0%, var(--felt-deep) 78%); position: relative; }
+.table-wrap {
+  height: 100dvh; min-height: 100vh; max-height: 100dvh;
+  display: flex; flex-direction: column;
+  background: radial-gradient(ellipse at 50% 0%, var(--felt) 0%, var(--felt-deep) 78%);
+  position: relative; overflow: hidden;
+}
 .topbar {
-  display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 8px;
-  position: sticky; top: 0; z-index: 5; background: linear-gradient(180deg, var(--felt-deep), rgba(10,51,38,.85) 80%, transparent);
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 6px;
+  background: linear-gradient(180deg, var(--felt-deep), rgba(10,51,38,.85) 80%, transparent);
 }
 .topbar .hand-no { font-family: var(--font-mono); font-size: 11px; color: var(--cream-dim); }
 .topbar .stage-label { font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; color: var(--gold-soft); text-transform: uppercase; font-weight: 700; }
@@ -164,10 +170,11 @@ input { font-family: inherit; }
 .card-deal { animation: dealIn .32s ease both; }
 
 /* ===== Poker table (oval, seats arranged around it) ===== */
-.table-oval-wrap { padding: 8px 14px 46px; display: flex; justify-content: center; }
+.table-oval-wrap { flex: 1 1 auto; min-height: 0; padding: 4px 12px 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .table-oval {
   position: relative;
   width: 100%;
+  height: 100%;
   max-width: 460px;
   aspect-ratio: 1 / 1.22;
   margin: 0 auto;
@@ -298,14 +305,17 @@ input { font-family: inherit; }
 
 /* ===== Your hand bar ===== */
 .your-hand-bar {
-  position: sticky; bottom: 0; z-index: 6;
+  flex: 0 0 auto;
   background: linear-gradient(160deg, var(--rail), var(--rail-dark));
   border-top: 1px solid rgba(212,175,55,.25);
-  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   box-shadow: 0 -10px 30px rgba(0,0,0,.3);
 }
-.your-hand-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.your-hand-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .your-hand-top .label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--cream-dim); }
+.your-stack-display { display: flex; align-items: center; gap: 6px; }
+.your-stack-display .chip-stack-icon { width: 20px; height: 14px; }
+.your-stack-display .chip-amount { font-size: 13px; }
 .your-hand-row { display: flex; align-items: center; gap: 12px; }
 .your-cards { display: flex; gap: 6px; }
 .your-cards .card { width: 50px; height: 70px; border-radius: 9px; }
@@ -708,7 +718,10 @@ input { font-family: inherit; }
     }
 
     return `<div class="your-hand-bar">
-      <div class="your-hand-top"><span class="label">Your Hand</span></div>
+      <div class="your-hand-top">
+        <div class="your-stack-display">${chipStackHTML(myPublic ? myPublic.chips : 0)}</div>
+        <span class="label">Your Hand</span>
+      </div>
       <div class="your-hand-row"><div class="your-cards">${cardsHtml}</div></div>
       ${bottom}
     </div>`;
