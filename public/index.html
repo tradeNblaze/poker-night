@@ -439,7 +439,7 @@ input { font-family: inherit; }
   let pub = null;   // last public 'state' message
   let you = null;   // last 'you' message
   let landing = { mode: 'choose', name: '', roomCodeInput: '', error: '' }; // choose | create | join
-  let ui = { showLog: false, raiseMode: false, raiseAmount: 0, confirmLeave: false, joinPending: false };
+  let ui = { showLog: false, raiseMode: false, raiseAmount: 0, confirmLeave: false, joinPending: false, viewingFinalResults: false };
 
   function loadSession() {
     try { return JSON.parse(localStorage.getItem('kth_session') || 'null'); } catch (e) { return null; }
@@ -505,6 +505,7 @@ input { font-family: inherit; }
       pub = msg;
       // self-heal stale UI flags across hand transitions
       if (pub.phase !== 'playing' || pub.stage === 'hand-over') { ui.raiseMode = false; }
+      if (!pub.gameOver) { ui.viewingFinalResults = false; }
       render();
     } else if (msg.type === 'you') {
       you = msg;
@@ -645,7 +646,7 @@ input { font-family: inherit; }
   }
 
   function renderGame() {
-    if (pub.gameOver) return renderGameOver();
+    if (pub.gameOver && ui.viewingFinalResults) return renderGameOver();
     const parts = [];
     parts.push(renderTopbar());
     if (pub.tournament) parts.push(renderTournamentStrip());
@@ -727,12 +728,12 @@ input { font-family: inherit; }
     const isTurn = pub.stage !== 'hand-over' && pub.currentSeat === p.seatIndex && !p.isOut;
     const result = pub.lastHandResult;
     const winnerEntry = result && result.winners.find(w => w.seat === p.seatIndex);
-    const showdownHand = result && result.showdown ? result.hands.find(h => h.seat === p.seatIndex) : null;
-    const showFace = pub.stage === 'hand-over' && showdownHand && !p.folded;
+    const handEntry = result && result.hands.find(h => h.seat === p.seatIndex);
+    const showFace = pub.stage === 'hand-over' && !!handEntry;
 
     let cardsHtml;
     if (p.isOut) cardsHtml = '';
-    else if (showFace) cardsHtml = showdownHand.holeCards.map(c => cardFaceHTML(c, 'tiny')).join('');
+    else if (showFace) cardsHtml = handEntry.holeCards.map(c => cardFaceHTML(c, 'tiny')).join('');
     else if (p.folded) cardsHtml = '';
     else cardsHtml = `<div class="card back tiny"></div><div class="card back tiny"></div>`;
 
@@ -746,11 +747,11 @@ input { font-family: inherit; }
     if (!p.isBot && !p.connected) badges.push(`<span class="badge badge-disconnected">AWAY</span>`);
 
     let handNameLine = '';
-    if (showFace) handNameLine = `<div class="oval-seat-hand-name">${escapeHtml(showdownHand.handName)}</div>`;
+    if (showFace && handEntry.handName) handNameLine = `<div class="oval-seat-hand-name">${escapeHtml(handEntry.handName)}</div>`;
 
     const betPill = (!p.isOut && p.contributionThisRound > 0 && pub.stage !== 'hand-over') ? `<div class="oval-seat-bet">bet $${p.contributionThisRound}</div>` : '';
 
-    return `<div class="oval-seat ${isTurn ? 'is-turn' : ''} ${p.folded && !p.isOut ? 'is-folded' : ''} ${p.isOut ? 'is-out' : ''} ${winnerEntry ? 'is-winner' : ''} ${isMe ? 'is-me' : ''}" style="left:${x}%;top:${y}%;">
+    return `<div class="oval-seat ${isTurn ? 'is-turn' : ''} ${p.folded && !p.isOut && !showFace ? 'is-folded' : ''} ${p.isOut ? 'is-out' : ''} ${winnerEntry ? 'is-winner' : ''} ${isMe ? 'is-me' : ''}" style="left:${x}%;top:${y}%;">
       <div class="oval-seat-pod">
         ${winnerEntry ? `<div class="oval-seat-win-amt">+$${winnerEntry.amount}</div>` : ''}
         <div class="avatar">${avatarInitial(p.name)}</div>
@@ -878,10 +879,16 @@ input { font-family: inherit; }
         sub = "It's a tie at showdown.";
       }
     }
+    const alreadyShown = r && r.hands.some(h => h.seat === mySeatIndex);
+    const canShow = you && you.holeCards && you.holeCards.length > 0 && !alreadyShown;
+    const mainAction = pub.gameOver
+      ? `<button class="btn btn-gold btn-block" data-action="view-final-results">See Final Results</button>`
+      : `<button class="btn btn-gold btn-block" data-action="next-hand">Deal Next Hand</button>`;
     return `<div class="handover-panel fade-up">
       <div class="handover-title">${escapeHtml(title)}</div>
       <div class="handover-sub">${escapeHtml(sub)}</div>
-      <button class="btn btn-gold btn-block" data-action="next-hand">Deal Next Hand</button>
+      ${canShow ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;" data-action="show-cards">Show My Cards</button>` : ''}
+      ${mainAction}
     </div>`;
   }
 
@@ -997,6 +1004,8 @@ input { font-family: inherit; }
       case 'leave-table': doLeaveTable(); break;
 
       case 'next-hand': send({ type: 'next_hand' }); break;
+      case 'show-cards': send({ type: 'show_cards' }); break;
+      case 'view-final-results': ui.viewingFinalResults = true; render(); break;
       case 'return-lobby': send({ type: 'return_to_lobby' }); break;
     }
   }
