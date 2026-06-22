@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { attachWebSocketServer } = require('./ws-server.js');
 const PE = require('./engine.js');
+const PL = require('./logic.js');
 const { botDecide } = require('./bot-ai.js');
 
 const PORT = process.env.PORT || 3000;
@@ -221,10 +222,27 @@ function buildPublicState(room) {
   base.gameOver = g.gameOver;
 
   if (g.lastHandResult) {
+    const hands = g.lastHandResult.hands.map(h => ({ seat: h.id, name: h.name, holeCards: h.holeCards, handName: h.handName }));
+    const alreadyShown = new Set(hands.map(h => h.seat));
+    if (room.voluntaryShows) {
+      for (const seat of room.voluntaryShows) {
+        if (alreadyShown.has(seat)) continue;
+        const engineIdx = seatToEngineIndex(room, seat);
+        const gp = engineIdx !== -1 ? g.players[engineIdx] : null;
+        if (!gp || !gp.holeCards || gp.holeCards.length === 0) continue;
+        const totalCards = gp.holeCards.length + g.communityCards.length;
+        let handName = null;
+        if (totalCards >= 5) {
+          try { handName = PL.evaluateBest([...gp.holeCards, ...g.communityCards]).name; } catch (e) { handName = null; }
+        }
+        hands.push({ seat, name: gp.name, holeCards: gp.holeCards, handName, voluntary: true });
+        alreadyShown.add(seat);
+      }
+    }
     base.lastHandResult = {
       showdown: g.lastHandResult.showdown,
       winners: g.lastHandResult.winners.map(w => ({ seat: w.id, name: w.name, amount: w.amount })),
-      hands: g.lastHandResult.hands.map(h => ({ seat: h.id, name: h.name, holeCards: h.holeCards, handName: h.handName })),
+      hands,
     };
   } else {
     base.lastHandResult = null;
@@ -283,6 +301,7 @@ function startGame(room) {
   const game = PE.createGame(configs, startSb, startBb);
   room.game = game;
   room.phase = 'playing';
+  room.voluntaryShows = new Set();
   // link engine players back to room players for chip persistence/view
   for (const p of room.players) {
     p._gp = game.players.find(gp => gp.id === p.seatIndex) || null;
@@ -429,6 +448,7 @@ async function handleMessage(connId, raw) {
       case 'start_game': return onStartGame(connId, msg);
       case 'action': return onAction(connId, msg);
       case 'next_hand': return onNextHand(connId, msg);
+      case 'show_cards': return onShowCards(connId, msg);
       case 'return_to_lobby': return onReturnToLobby(connId, msg);
       case 'leave_room': return onLeaveRoom(connId, msg);
       case 'ping': return; // keepalive no-op
@@ -606,9 +626,22 @@ function onNextHand(connId, msg) {
   if (!room || room.phase !== 'playing' || !room.game) return;
   if (room.game.stage !== 'hand-over') return;
   if (room.game.gameOver) return; // nothing to deal; client should show final results
+  room.voluntaryShows = new Set();
   PE.startHand(room.game);
   syncChipsToRoomPlayers(room);
   scheduleNextActorIfNeeded(room);
+  broadcast(room);
+}
+
+function onShowCards(connId, msg) {
+  const conn = connections.get(connId);
+  const room = rooms.get(conn.roomCode);
+  if (!room || room.phase !== 'playing' || !room.game) return;
+  if (room.game.stage !== 'hand-over') return;
+  const engineIdx = seatToEngineIndex(room, conn.seatIndex);
+  if (engineIdx === -1) return; // wasn't dealt into this hand
+  if (!room.voluntaryShows) room.voluntaryShows = new Set();
+  room.voluntaryShows.add(conn.seatIndex);
   broadcast(room);
 }
 
