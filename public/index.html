@@ -971,7 +971,14 @@ input { font-family: inherit; }
         break;
 
       case 'add-bot': send({ type: 'add_bot' }); break;
-      case 'set-mode': send({ type: 'update_settings', settings: { mode: target.dataset.mode } }); break;
+      case 'set-mode': {
+        const mode = target.dataset.mode;
+        const presets = mode === 'tournament'
+          ? { mode, chips: 10000, sb: 25, bb: 50, roundMinutes: 5 }
+          : { mode, chips: 1000, sb: 5, bb: 10 };
+        send({ type: 'update_settings', settings: presets });
+        break;
+      }
       case 'remove-player': send({ type: 'remove_player', seatIndex: Number(target.dataset.seat) }); break;
       case 'start-game': send({ type: 'start_game' }); break;
 
