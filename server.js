@@ -52,6 +52,7 @@ function serializeRoomForPersistence(room) {
     settings: room.settings,
     phase: room.phase,
     game: room.game,
+    tournament: room.tournament,
     lastActivity: room.lastActivity,
     players: room.players.map(p => ({
       seatIndex: p.seatIndex, name: p.name, isBot: p.isBot, token: p.token,
@@ -67,6 +68,8 @@ function deserializeRoomFromPersistence(saved) {
     settings: saved.settings,
     phase: saved.phase,
     game: saved.game,
+    tournament: saved.tournament || null,
+    tournamentTimer: null,
     lastActivity: saved.lastActivity || Date.now(),
     pendingTimer: null,
     players: saved.players.map(p => ({ ...p, connId: null, _gp: null })),
@@ -112,6 +115,7 @@ async function getOrLoadRoom(code) {
   if (room) {
     rooms.set(code, room);
     if (room.phase === 'playing') scheduleNextActorIfNeeded(room); // re-arm whatever timer was running
+    if (room.tournament) armTournamentTimer(room); // resume the blind-level clock from where it left off
   }
   return room;
 }
@@ -134,9 +138,11 @@ function createRoom() {
   const room = {
     code,
     players: [], // { seatIndex, name, isBot, token, connId, chips, isOut }
-    settings: { chips: 1000, sb: 5, bb: 10 },
+    settings: { chips: 1000, sb: 5, bb: 10, mode: 'cash', roundMinutes: 5 },
     phase: 'lobby', // lobby | playing
     game: null,
+    tournament: null, // { level, sb, bb, roundMs, levelDeadline } - only set when mode is 'tournament'
+    tournamentTimer: null,
     pendingTimer: null, // {seatIndex, timer} for disconnect-grace or bot-delay
     lastActivity: Date.now(),
   };
@@ -191,6 +197,10 @@ function buildPublicState(room) {
     roomCode: room.code,
     phase: room.phase,
     settings: room.settings,
+    tournament: room.tournament ? {
+      level: room.tournament.level, sb: room.tournament.sb, bb: room.tournament.bb,
+      levelDeadline: room.tournament.levelDeadline, roundMs: room.tournament.roundMs,
+    } : null,
     players: room.players.slice().sort((a, b) => a.seatIndex - b.seatIndex).map(publicPlayerView),
   };
   if (room.phase === 'lobby') return base;
@@ -203,6 +213,7 @@ function buildPublicState(room) {
   base.bbSeat = seatForEngineIndex(room, g.bbIndex);
   base.currentSeat = g.stage === 'hand-over' ? null : seatForEngineIndex(room, g.currentPlayerIndex);
   base.turnDeadline = (g.stage !== 'hand-over' && g.turnDeadline) ? g.turnDeadline : null;
+  base.turnDurationMs = TURN_TIME_MS;
   base.pot = g.players.reduce((s, p) => s + p.totalContributionThisHand, 0);
   base.currentBet = g.currentBet;
   base.communityCards = g.communityCards;
@@ -266,7 +277,10 @@ function broadcast(room) {
 function startGame(room) {
   const seated = room.players.filter(p => !p.removed);
   const configs = seated.map(p => ({ id: p.seatIndex, name: p.name, isBot: p.isBot, chips: room.settings.chips }));
-  const game = PE.createGame(configs, room.settings.sb, room.settings.bb);
+  startTournamentIfNeeded(room);
+  const startSb = room.tournament ? room.tournament.sb : room.settings.sb;
+  const startBb = room.tournament ? room.tournament.bb : room.settings.bb;
+  const game = PE.createGame(configs, startSb, startBb);
   room.game = game;
   room.phase = 'playing';
   // link engine players back to room players for chip persistence/view
@@ -291,6 +305,53 @@ function clearPendingTimer(room) {
     room.pendingTimer = null;
   }
   if (room.game) room.game.turnDeadline = null;
+}
+
+// ===================== TOURNAMENT MODE =====================
+function clearTournamentTimer(room) {
+  if (room.tournamentTimer) {
+    clearTimeout(room.tournamentTimer);
+    room.tournamentTimer = null;
+  }
+}
+
+function blindsForLevel(baseSb, baseBb, level) {
+  const mult = Math.pow(2, level - 1); // simple doubling each level - structure can be customized later
+  return { sb: baseSb * mult, bb: baseBb * mult };
+}
+
+function startTournamentIfNeeded(room) {
+  clearTournamentTimer(room);
+  if (room.settings.mode !== 'tournament') { room.tournament = null; return; }
+  const roundMs = Math.max(1, Number(room.settings.roundMinutes) || 5) * 60 * 1000;
+  const { sb, bb } = blindsForLevel(room.settings.sb, room.settings.bb, 1);
+  room.tournament = { level: 1, sb, bb, roundMs, levelDeadline: Date.now() + roundMs };
+  armTournamentTimer(room);
+}
+
+function armTournamentTimer(room) {
+  clearTournamentTimer(room);
+  if (!room.tournament) return;
+  const delay = Math.max(0, room.tournament.levelDeadline - Date.now());
+  room.tournamentTimer = setTimeout(() => {
+    try { levelUpTournament(room); } catch (err) { console.error('Tournament level-up error in room', room.code, err); }
+  }, delay);
+}
+
+function levelUpTournament(room) {
+  if (!room.tournament) return;
+  room.tournament.level += 1;
+  const { sb, bb } = blindsForLevel(room.settings.sb, room.settings.bb, room.tournament.level);
+  room.tournament.sb = sb;
+  room.tournament.bb = bb;
+  if (room.game) {
+    // Takes effect starting the next hand - a hand already in progress keeps its original blinds.
+    room.game.smallBlind = sb;
+    room.game.bigBlind = bb;
+  }
+  room.tournament.levelDeadline = Date.now() + room.tournament.roundMs;
+  armTournamentTimer(room);
+  broadcast(room);
 }
 
 function scheduleNextActorIfNeeded(room) {
@@ -383,6 +444,8 @@ function onReturnToLobby(connId, msg) {
   const room = rooms.get(conn.roomCode);
   if (!room || room.phase !== 'playing' || !room.game || !room.game.gameOver) return;
   clearPendingTimer(room);
+  clearTournamentTimer(room);
+  room.tournament = null;
   room.phase = 'lobby';
   room.game = null;
   room.players = room.players.filter(p => p.isBot || p.connId);
@@ -500,6 +563,8 @@ function onUpdateSettings(connId, msg) {
   if (Number.isFinite(s.chips) && s.chips >= 20) room.settings.chips = Math.floor(s.chips);
   if (Number.isFinite(s.sb) && s.sb >= 1) room.settings.sb = Math.floor(s.sb);
   if (Number.isFinite(s.bb) && s.bb >= 2 && s.bb > room.settings.sb) room.settings.bb = Math.floor(s.bb);
+  if (s.mode === 'cash' || s.mode === 'tournament') room.settings.mode = s.mode;
+  if (Number.isFinite(s.roundMinutes) && s.roundMinutes >= 1 && s.roundMinutes <= 60) room.settings.roundMinutes = Math.floor(s.roundMinutes);
   broadcast(room);
 }
 
@@ -576,6 +641,7 @@ function maybeCleanupRoom(room) {
   const anyoneConnected = room.players.some(p => p.isBot || p.connId);
   if (!anyoneConnected) {
     clearPendingTimer(room);
+    clearTournamentTimer(room);
     rooms.delete(room.code);
   }
 }
@@ -616,6 +682,7 @@ setInterval(() => {
     const anyoneConnected = room.players.some(p => p.isBot || p.connId);
     if (!anyoneConnected && now - room.lastActivity > 5 * 60 * 1000) {
       clearPendingTimer(room);
+      clearTournamentTimer(room);
       rooms.delete(code);
     }
   }
