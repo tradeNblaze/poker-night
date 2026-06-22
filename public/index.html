@@ -90,6 +90,16 @@ input { font-family: inherit; }
 .field input:focus { outline: none; }
 .field input.text-input { font-family: var(--font-body); font-size: 15px; font-weight: 600; text-transform: none; }
 .field-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+
+.toggle-pair {
+  display: flex; background: rgba(0,0,0,.3); border-radius: 10px; overflow: hidden;
+  border: 1px solid rgba(243,233,212,.1);
+}
+.toggle-pair button {
+  border: none; background: transparent; color: var(--cream-dim);
+  font-size: 13px; font-weight: 700; font-family: var(--font-body);
+}
+.toggle-pair button.active { background: var(--gold); color: #2b1f08; }
 .code-input { text-transform: uppercase; letter-spacing: 4px; font-size: 22px !important; }
 
 .error-msg { color: var(--ember-soft); font-size: 12.5px; text-align: center; margin-top: 10px; min-height: 16px; }
@@ -372,6 +382,38 @@ input { font-family: inherit; }
 .muted { color: var(--cream-dim); }
 .hidden { display: none !important; }
 
+.turn-countdown {
+  font-family: var(--font-mono); font-weight: 700; font-size: 11px;
+  color: var(--gold-soft); background: rgba(212,175,55,.16);
+  border-radius: 6px; padding: 1px 6px; display: inline-block; min-width: 22px; text-align: center;
+}
+.turn-countdown.urgent { color: #fff; background: var(--ember); }
+.oval-seat-name .turn-countdown { font-size: 8px; padding: 0px 4px; margin-left: 2px; }
+.your-hand-top .label .turn-countdown { font-size: 12px; margin-left: 4px; }
+
+.timer-bar-track {
+  width: 100%; height: 6px; border-radius: 4px;
+  background: rgba(0,0,0,.35); overflow: hidden; position: relative;
+}
+.timer-bar-fill {
+  height: 100%; width: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-soft));
+  transition: width .22s linear, background .3s ease;
+}
+.timer-bar-fill.urgent { background: linear-gradient(90deg, #8a2418, var(--ember)); }
+.oval-seat .timer-bar-track { height: 4px; margin-top: 3px; }
+.your-hand-bar .timer-bar-track { margin: 6px 0 2px; }
+
+.tournament-strip {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 6px 16px; background: rgba(212,175,55,.08); border-bottom: 1px solid rgba(212,175,55,.18);
+  font-family: var(--font-mono); font-size: 11.5px; flex: 0 0 auto;
+}
+.tournament-level { color: var(--gold-soft); font-weight: 700; letter-spacing: .5px; }
+.tournament-blinds { color: var(--cream); }
+.tournament-next { color: var(--cream-dim); }
+.level-countdown { color: var(--gold-soft); font-weight: 700; }
+
 @media (max-width: 380px) {
   .card { width: 36px; height: 52px; } .card-rank { font-size: 14px; }
   .your-cards .card { width: 44px; height: 62px; }
@@ -455,7 +497,10 @@ input { font-family: inherit; }
     } else if (msg.type === 'error') {
       ui.joinPending = false;
       if (!session) { landing.error = msg.message; render(); }
-      else { landing.error = msg.message; if (!pub) { clearSession(); render(); } }
+      else {
+        landing.error = "Lost the connection to your game (the server likely restarted) — sorry about that. Start a new one below.";
+        if (!pub) { clearSession(); render(); }
+      }
     } else if (msg.type === 'state') {
       pub = msg;
       // self-heal stale UI flags across hand transitions
@@ -471,7 +516,7 @@ input { font-family: inherit; }
   function render() {
     if (!pub) { app.innerHTML = renderLanding() + renderConnStatus(); return; }
     if (pub.phase === 'lobby') { app.innerHTML = renderLobby() + renderConnStatus(); return; }
-    if (pub.phase === 'playing') { app.innerHTML = renderGame() + renderConnStatus(); return; }
+    if (pub.phase === 'playing') { app.innerHTML = renderGame() + renderConnStatus(); tickCountdown(); return; }
   }
 
   function renderConnStatus() {
@@ -517,6 +562,7 @@ input { font-family: inherit; }
           <div class="field"><label>Your Name</label><input type="text" class="text-input" placeholder="e.g. Sam" value="${escapeHtml(landing.name)}" data-bind="landing-name" maxlength="18"></div>
           ${!isCreate ? `<div class="field"><label>Room Code</label><input type="text" class="text-input code-input" placeholder="ABCD" value="${escapeHtml(landing.roomCodeInput)}" data-bind="landing-code" maxlength="4"></div>` : ''}
         </div>
+        ${!isCreate ? `<p style="font-size:11.5px;color:var(--cream-dim);margin:0 0 8px;">Got booted mid-game? Type the exact same name you used before to jump back into your seat.</p>` : ''}
         <div class="error-msg">${escapeHtml(landing.error)}</div>
         <div class="action-row">
           <button class="btn btn-ghost" data-action="goto-choose">Back</button>
@@ -550,6 +596,22 @@ input { font-family: inherit; }
           <div class="field"><label>Small Blind</label><input type="number" min="1" step="1" value="${pub.settings.sb}" data-bind="settings-sb"></div>
         </div>
         <div class="field" style="margin-top:10px;max-width:calc(50% - 5px);"><label>Big Blind</label><input type="number" min="2" step="1" value="${pub.settings.bb}" data-bind="settings-bb"></div>
+
+        <div class="section-label">Game Mode</div>
+        <div class="toggle-pair" style="width:100%;margin-bottom:${pub.settings.mode === 'tournament' ? '10px' : '0'};">
+          <button data-action="set-mode" data-mode="cash" class="${pub.settings.mode !== 'tournament' ? 'active' : ''}" style="flex:1;padding:10px;">Cash Game</button>
+          <button data-action="set-mode" data-mode="tournament" class="${pub.settings.mode === 'tournament' ? 'active' : ''}" style="flex:1;padding:10px;">Tournament</button>
+        </div>
+        ${pub.settings.mode === 'tournament' ? `
+        <div class="field" style="max-width:calc(50% - 5px);">
+          <label>Blinds Go Up Every</label>
+          <div style="display:flex;align-items:baseline;gap:6px;">
+            <input type="number" min="1" max="60" step="1" value="${pub.settings.roundMinutes}" data-bind="settings-roundminutes" style="width:auto;flex:1;">
+            <span style="font-family:var(--font-mono);font-size:12px;color:var(--cream-dim);">min</span>
+          </div>
+        </div>
+        <p style="font-size:11.5px;color:var(--cream-dim);margin:8px 0 0;">Blinds double each level. Starts at ${pub.settings.sb}/${pub.settings.bb}.</p>
+        ` : ''}
 
         <div class="lobby-actions">
           <button class="btn btn-ghost" data-action="leave-table">Leave</button>
@@ -586,12 +648,21 @@ input { font-family: inherit; }
     if (pub.gameOver) return renderGameOver();
     const parts = [];
     parts.push(renderTopbar());
+    if (pub.tournament) parts.push(renderTournamentStrip());
     parts.push(renderTableOval());
     if (pub.stage === 'hand-over') parts.push(renderHandOverPanel());
     else parts.push(renderYourHandBar());
     if (ui.showLog) parts.push(renderLogPanel());
     if (ui.confirmLeave) parts.push(renderConfirmLeave());
     return `<div class="table-wrap">${parts.join('')}</div>`;
+  }
+
+  function renderTournamentStrip() {
+    return `<div class="tournament-strip">
+      <span class="tournament-level">Level ${pub.tournament.level}</span>
+      <span class="tournament-blinds">${pub.tournament.sb}/${pub.tournament.bb}</span>
+      <span class="tournament-next">Next level <span class="level-countdown">--:--</span></span>
+    </div>`;
   }
 
   function renderTopbar() {
@@ -685,6 +756,7 @@ input { font-family: inherit; }
         ${winnerEntry ? `<div class="oval-seat-win-amt">+$${winnerEntry.amount}</div>` : ''}
         <div class="avatar">${avatarInitial(p.name)}</div>
         <div class="oval-seat-name">${escapeHtml(p.name)}${isMe ? ' (you)' : ''}</div>
+        ${isTurn ? timerBarHTML() : ''}
         <div class="oval-seat-badges">${badges.join('')}</div>
         <div class="oval-seat-cards">${cardsHtml}</div>
         ${chipStackHTML(p.chips)}
@@ -700,11 +772,6 @@ input { font-family: inherit; }
       ? you.holeCards.map(c => cardFaceHTML(c)).join('')
       : `<div class="card back"></div><div class="card back"></div>`;
 
-    let strengthHtml = '';
-    if (you && you.holeCards && you.holeCards.length && pub.communityCards.length >= 3) {
-      // lightweight client-side hint only when we have 5+ total cards; server already validated game logic
-    }
-
     let bottom;
     if (myPublic && myPublic.folded) {
       bottom = `<div class="waiting-strip">You folded this hand</div>`;
@@ -714,17 +781,61 @@ input { font-family: inherit; }
       bottom = `<div class="action-panel">${ui.raiseMode ? renderRaisePanel(you.validActions) : renderActionButtons(you.validActions)}</div>`;
     } else {
       const curName = pub.players.find(p => p.seatIndex === pub.currentSeat);
-      bottom = `<div class="waiting-strip">Waiting on <b style="color:var(--cream);margin-left:4px;">${escapeHtml(curName ? curName.name : '...')}</b><span class="dot-pulse"><span></span><span></span><span></span></span></div>`;
+      bottom = `<div class="waiting-strip">Waiting on <b style="color:var(--cream);margin-left:4px;">${escapeHtml(curName ? curName.name : '...')}</b><span class="dot-pulse"><span></span><span></span><span></span></span> ${countdownBadgeHTML()}</div>`;
     }
 
     return `<div class="your-hand-bar">
       <div class="your-hand-top">
         <div class="your-stack-display">${chipStackHTML(myPublic ? myPublic.chips : 0)}</div>
-        <span class="label">Your Hand</span>
+        ${isMyTurn ? `<span class="label">Your turn ${countdownBadgeHTML()}</span>` : `<span class="label">Your Hand</span>`}
       </div>
+      ${pub.turnDeadline ? timerBarHTML() : ''}
       <div class="your-hand-row"><div class="your-cards">${cardsHtml}</div></div>
       ${bottom}
     </div>`;
+  }
+
+  function countdownBadgeHTML(extraClass) {
+    return `<span class="turn-countdown ${extraClass || ''}">--</span>`;
+  }
+
+  function timerBarHTML() {
+    return `<div class="timer-bar-track"><div class="timer-bar-fill"></div></div>`;
+  }
+
+  function tickCountdown() {
+    const els = document.querySelectorAll('.turn-countdown');
+    const bars = document.querySelectorAll('.timer-bar-fill');
+    if (els.length || bars.length) {
+      if (!pub || !pub.turnDeadline) {
+        els.forEach(el => { el.textContent = ''; });
+      } else {
+        const remainingMs = Math.max(0, pub.turnDeadline - Date.now());
+        const remaining = Math.ceil(remainingMs / 1000);
+        const isUrgent = remaining <= 5;
+        els.forEach(el => {
+          el.textContent = remaining + 's';
+          el.classList.toggle('urgent', isUrgent);
+        });
+        const totalMs = pub.turnDurationMs || 20000;
+        const pct = Math.max(0, Math.min(100, (remainingMs / totalMs) * 100));
+        bars.forEach(bar => {
+          bar.style.width = pct + '%';
+          bar.classList.toggle('urgent', isUrgent);
+        });
+      }
+    }
+
+    if (pub && pub.tournament) {
+      const levelEls = document.querySelectorAll('.level-countdown');
+      if (levelEls.length) {
+        const levelRemainingMs = Math.max(0, pub.tournament.levelDeadline - Date.now());
+        const mins = Math.floor(levelRemainingMs / 60000);
+        const secs = Math.floor((levelRemainingMs % 60000) / 1000);
+        const text = mins + ':' + String(secs).padStart(2, '0');
+        levelEls.forEach(el => { el.textContent = text; });
+      }
+    }
   }
 
   function renderActionButtons(va) {
@@ -860,6 +971,7 @@ input { font-family: inherit; }
         break;
 
       case 'add-bot': send({ type: 'add_bot' }); break;
+      case 'set-mode': send({ type: 'update_settings', settings: { mode: target.dataset.mode } }); break;
       case 'remove-player': send({ type: 'remove_player', seatIndex: Number(target.dataset.seat) }); break;
       case 'start-game': send({ type: 'start_game' }); break;
 
@@ -892,6 +1004,7 @@ input { font-family: inherit; }
     else if (bind === 'settings-chips') send({ type: 'update_settings', settings: { chips: Number(el.value) } });
     else if (bind === 'settings-sb') send({ type: 'update_settings', settings: { sb: Number(el.value) } });
     else if (bind === 'settings-bb') send({ type: 'update_settings', settings: { bb: Number(el.value) } });
+    else if (bind === 'settings-roundminutes') send({ type: 'update_settings', settings: { roundMinutes: Number(el.value) } });
     else if (bind === 'raise-slider') {
       ui.raiseAmount = Number(el.value);
       const disp = document.getElementById('raiseAmountDisplay');
@@ -913,6 +1026,7 @@ input { font-family: inherit; }
 
   // keepalive ping so idle connections don't get dropped by intermediary proxies
   setInterval(() => send({ type: 'ping' }), 25000);
+  setInterval(tickCountdown, 250);
 
   render();
   connect();
