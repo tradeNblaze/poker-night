@@ -679,11 +679,10 @@ input { font-family: inherit; }
   // Build seat positions around an oval, with "you" anchored at the bottom (like real poker sites)
   function seatPositions(players, mySeat) {
     const n = players.length;
-    const myIdx = Math.max(0, players.findIndex(p => p.seatIndex === mySeat));
-    const ordered = players.slice(myIdx).concat(players.slice(0, myIdx));
+    const ordered = players.slice().sort((a, b) => a.seatIndex - b.seatIndex); // fixed, absolute order - same on every device
     const Rx = n >= 7 ? 48 : 47, Ry = n >= 7 ? 41 : 39; // percentage radii within the table-oval box
     return ordered.map((p, i) => {
-      const angleDeg = 90 + (360 / n) * i;
+      const angleDeg = 90 + (360 / n) * i; // clockwise from bottom
       const rad = (angleDeg * Math.PI) / 180;
       const x = 50 + Rx * Math.cos(rad);
       const y = 50 + Ry * Math.sin(rad);
