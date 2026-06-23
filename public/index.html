@@ -349,6 +349,16 @@ input { font-family: inherit; }
 .raise-slider-row { display: flex; align-items: center; gap: 10px; }
 .raise-slider-row input[type=range] { flex: 1; accent-color: var(--gold); }
 .raise-amount-display { font-family: var(--font-mono); font-weight: 700; color: var(--gold-soft); font-size: 17px; min-width: 64px; text-align: right; }
+.raise-type-row {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  background: rgba(0,0,0,.28); border: 1px solid rgba(212,175,55,.25); border-radius: 10px; padding: 6px 10px;
+}
+.raise-type-dollar { font-family: var(--font-mono); font-weight: 700; color: var(--gold-soft); font-size: 18px; }
+.raise-type-input {
+  background: transparent; border: none; color: var(--gold-soft); font-family: var(--font-mono);
+  font-weight: 700; font-size: 19px; text-align: center; width: 100px; padding: 2px 0;
+}
+.raise-type-input:focus { outline: none; }
 
 /* ===== Hand-over / Game over ===== */
 .handover-panel { background: linear-gradient(160deg, var(--rail), var(--rail-dark)); border: 1px solid rgba(212,175,55,.3); border-radius: 16px; padding: 16px; box-shadow: var(--shadow-lg); text-align: center; margin: 0 14px 14px; }
@@ -843,7 +853,7 @@ input { font-family: inherit; }
     return `<div class="action-row">
       <button class="btn btn-ember" data-action="do-fold">Fold</button>
       ${va.canCheck ? `<button class="btn btn-ghost" data-action="do-check">Check</button>` : `<button class="btn btn-ghost" data-action="do-call">${callLabel}</button>`}
-      ${va.canRaise ? `<button class="btn btn-gold" data-action="open-raise">Raise</button>` : ''}
+      ${va.canRaise ? `<button class="btn btn-gold" data-action="open-raise">${pub.currentBet > 0 ? 'Raise' : 'Bet'}</button>` : ''}
     </div>`;
   }
 
@@ -851,17 +861,24 @@ input { font-family: inherit; }
     return `<div class="raise-panel fade-up">
       <div class="raise-quick">
         <button data-action="raise-quick" data-kind="min" class="${ui.raiseAmount === va.minRaiseTo ? 'active' : ''}">Min</button>
+        <button data-action="raise-quick" data-kind="x2">2x</button>
+        <button data-action="raise-quick" data-kind="x3">3x</button>
+      </div>
+      <div class="raise-quick">
         <button data-action="raise-quick" data-kind="half">½ Pot</button>
         <button data-action="raise-quick" data-kind="pot">Pot</button>
         <button data-action="raise-quick" data-kind="allin" class="${ui.raiseAmount === va.maxRaiseTo ? 'active' : ''}">All-In</button>
       </div>
       <div class="raise-slider-row">
         <input type="range" min="${va.minRaiseTo}" max="${va.maxRaiseTo}" step="1" value="${ui.raiseAmount}" data-bind="raise-slider">
-        <span class="raise-amount-display" id="raiseAmountDisplay">$${ui.raiseAmount}</span>
+      </div>
+      <div class="raise-type-row">
+        <span class="raise-type-dollar">$</span>
+        <input type="number" id="raiseAmountInput" class="raise-type-input" min="${va.minRaiseTo}" max="${va.maxRaiseTo}" step="1" value="${ui.raiseAmount}" data-bind="raise-amount-input">
       </div>
       <div class="action-row">
         <button class="btn btn-ghost" data-action="cancel-raise">Back</button>
-        <button class="btn btn-gold" id="confirmRaiseBtn" data-action="confirm-raise">Confirm Raise to $${ui.raiseAmount}</button>
+        <button class="btn btn-gold" id="confirmRaiseBtn" data-action="confirm-raise">${pub.currentBet > 0 ? `Confirm Raise to $${ui.raiseAmount}` : `Confirm Bet of $${ui.raiseAmount}`}</button>
       </div>
     </div>`;
   }
@@ -942,8 +959,11 @@ input { font-family: inherit; }
   }
   function setRaiseQuick(kind, va) {
     const potTotal = pub.pot;
+    const base = pub.currentBet > 0 ? pub.currentBet : (pub.bigBlind || 10);
     let target;
     if (kind === 'min') target = va.minRaiseTo;
+    else if (kind === 'x2') target = clamp(base * 2, va.minRaiseTo, va.maxRaiseTo);
+    else if (kind === 'x3') target = clamp(base * 3, va.minRaiseTo, va.maxRaiseTo);
     else if (kind === 'half') target = clamp(pub.currentBet + Math.max(va.minRaiseTo - pub.currentBet, Math.round(potTotal * 0.5)), va.minRaiseTo, va.maxRaiseTo);
     else if (kind === 'pot') target = clamp(pub.currentBet + Math.max(va.minRaiseTo - pub.currentBet, potTotal), va.minRaiseTo, va.maxRaiseTo);
     else if (kind === 'allin') target = va.maxRaiseTo;
@@ -1022,17 +1042,32 @@ input { font-family: inherit; }
     else if (bind === 'settings-roundminutes') send({ type: 'update_settings', settings: { roundMinutes: Number(el.value) } });
     else if (bind === 'raise-slider') {
       ui.raiseAmount = Number(el.value);
-      const disp = document.getElementById('raiseAmountDisplay');
-      if (disp) disp.textContent = '$' + ui.raiseAmount;
-      const confirmBtn = document.getElementById('confirmRaiseBtn');
-      if (confirmBtn) confirmBtn.textContent = 'Confirm Raise to $' + ui.raiseAmount;
+      syncRaiseUI();
+    } else if (bind === 'raise-amount-input') {
       const va = you && you.validActions;
-      if (va) {
-        const minBtn = document.querySelector('[data-action="raise-quick"][data-kind="min"]');
-        const allinBtn = document.querySelector('[data-action="raise-quick"][data-kind="allin"]');
-        if (minBtn) minBtn.classList.toggle('active', ui.raiseAmount === va.minRaiseTo);
-        if (allinBtn) allinBtn.classList.toggle('active', ui.raiseAmount === va.maxRaiseTo);
+      if (!va) return;
+      const raw = Number(el.value);
+      if (Number.isFinite(raw)) {
+        ui.raiseAmount = raw; // don't clamp while typing - clamp on confirm/blur so digits aren't fought mid-type
+        const slider = document.querySelector('input[data-bind="raise-slider"]');
+        if (slider) slider.value = clamp(raw, va.minRaiseTo, va.maxRaiseTo);
+        const confirmBtn = document.getElementById('confirmRaiseBtn');
+        if (confirmBtn) confirmBtn.textContent = (pub && pub.currentBet > 0 ? 'Confirm Raise to $' : 'Confirm Bet of $') + raw;
       }
+    }
+  }
+
+  function syncRaiseUI() {
+    const va = you && you.validActions;
+    const amountInput = document.getElementById('raiseAmountInput');
+    if (amountInput) amountInput.value = ui.raiseAmount;
+    const confirmBtn = document.getElementById('confirmRaiseBtn');
+    if (confirmBtn) confirmBtn.textContent = (pub && pub.currentBet > 0 ? 'Confirm Raise to $' : 'Confirm Bet of $') + ui.raiseAmount;
+    if (va) {
+      const minBtn = document.querySelector('[data-action="raise-quick"][data-kind="min"]');
+      const allinBtn = document.querySelector('[data-action="raise-quick"][data-kind="allin"]');
+      if (minBtn) minBtn.classList.toggle('active', ui.raiseAmount === va.minRaiseTo);
+      if (allinBtn) allinBtn.classList.toggle('active', ui.raiseAmount === va.maxRaiseTo);
     }
   }
 
