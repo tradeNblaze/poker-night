@@ -217,6 +217,7 @@ function buildPublicState(room) {
   base.turnDurationMs = TURN_TIME_MS;
   base.pot = g.players.reduce((s, p) => s + p.totalContributionThisHand, 0);
   base.currentBet = g.currentBet;
+  base.bigBlind = g.bigBlind;
   base.communityCards = g.communityCards;
   base.log = g.log;
   base.gameOver = g.gameOver;
